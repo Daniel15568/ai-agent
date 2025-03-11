@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 from PIL import Image
 from io import BytesIO
 import base64
+from pydub import AudioSegment
+from pydub.playback import play
+import pygame
 
 load_dotenv()
 openai = OpenAI()

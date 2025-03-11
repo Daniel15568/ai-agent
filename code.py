@@ -1,6 +1,9 @@
 import gradio as gr, os, json
 from openai import OpenAI
 from dotenv import load_dotenv
+from PIL import Image
+from io import BytesIO
+import base64
 
 load_dotenv()
 openai = OpenAI()
@@ -69,3 +72,88 @@ kit_price = {
 }
 
 tools = [{'type':'function', 'function':kit_price}]
+
+def handle_tool_call(tool_call):
+    try:
+        arguments = json.loads(tool_call.function.arguments)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in tool call arguments: {e}")
+    
+    kit = arguments.get('kit_name')
+    if not kit:
+        raise ValueError("No 'kit_name' found in tool call arguments.")
+    
+    price = get_football_kit_price(kit)
+    
+    response = {
+        'role': 'tool',
+        'name': tool_call.function.name,  
+        'content': str(price),  
+        'tool_call_id': tool_call.id  
+    }
+    return response, kit
+
+
+def artist(club):
+    img_response = openai.images.generate(
+        model='dall-e-3',
+        prompt= f"an image showing the {club} football club kit for the 2020 season",
+        size='1024x1024',
+        n=1,
+        response_format='b64_json'
+    )
+    image_data = img_response.data[0].b64_json
+    image_data = base64.b64decode(image_data)
+    return Image.open(BytesIO(image_data))
+
+def talker(message):
+    response = openai.audio.speech.create(
+        model='tts-1',
+        voice='onyx',
+        input=message
+    )
+    audio_stream = BytesIO(response.content)
+    pygame.init()
+    pygame.mixer.init()
+    sound = pygame.mixer.Sound(audio_stream)
+    sound.play()
+    while pygame.mixer.get_busy():
+        pygame.time.delay(100)
+    pygame.quit()
+
+def chat(message, history):
+    image = None
+    messages = [{'role': 'system', 'content': sys_prompt}]
+    for human, assistant in history:
+        messages.append({'role': 'user', 'content': human})
+        messages.append({'role': 'assistant', 'content': assistant})
+    messages.append({'role': 'user', 'content': message})
+
+    response = openai.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=tools,
+        tool_choice='auto'
+    )
+    
+    assistant_message = response.choices[0].message
+    if assistant_message.tool_calls:
+        messages.append({
+            'role': 'assistant',
+            'content': assistant_message.content,
+            'tool_calls': assistant_message.tool_calls
+        })
+
+        for tool_call in assistant_message.tool_calls:
+            tool_response, kit = handle_tool_call(tool_call)
+            messages.append(tool_response)
+            image = artist(kit)
+        
+        response = openai.chat.completions.create(
+            model=model,
+            messages=messages
+        )
+    
+    reply = response.choices[0].message.content
+    talker(reply)
+    return reply, image
